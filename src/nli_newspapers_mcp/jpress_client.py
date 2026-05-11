@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import os
 import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -138,18 +139,35 @@ class JpressClient:
             if self._page is not None:
                 return
             self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
+            headless = os.environ.get("PLAYWRIGHT_HEADLESS", "true").lower() == "true"
+            self._browser = await self._pw.chromium.launch(headless=headless)
             self._context = await self._browser.new_context(
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             self._page = await self._context.new_page()
-            # Navigate once to pass Cloudflare challenge
-            await self._page.goto(f"{self.BASE_URL}/titles", wait_until="networkidle")
+            await self._page.goto(f"{self.BASE_URL}/titles", wait_until="domcontentloaded", timeout=60000)
+            # Wait for Cloudflare challenge to resolve
+            try:
+                await self._page.wait_for_function(
+                    "() => !document.title.includes('Just a moment')",
+                    timeout=30000,
+                )
+            except Exception:
+                pass
+            await self._page.wait_for_load_state("domcontentloaded")
 
     async def _get_page_html(self, url: str) -> str:
         await self._ensure_browser()
         assert self._page is not None
-        await self._page.goto(url, wait_until="networkidle")
+        await self._page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            await self._page.wait_for_function(
+                "() => !document.title.includes('Just a moment')",
+                timeout=15000,
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(1)
         return await self._page.content()
 
     async def list_titles(self, language: str | None = None, region: str | None = None) -> list[NewspaperTitle]:
