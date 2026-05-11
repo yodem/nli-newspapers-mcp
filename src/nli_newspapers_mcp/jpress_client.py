@@ -1,6 +1,8 @@
 from __future__ import annotations
+import asyncio
 import re
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from nli_newspapers_mcp.models import ArticleResult, NewspaperTitle, IssueInfo, PageText
 
 # Unicode bidi markers to strip
@@ -117,3 +119,105 @@ class JpressParser:
                 issue_url=href.split("?")[0],
             ))
         return issues
+
+
+class JpressClient:
+    BASE_URL = "https://www.nli.org.il/he/newspapers"
+
+    def __init__(self):
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._pw = None
+        self._lock = asyncio.Lock()
+
+    async def _ensure_browser(self):
+        if self._page is not None:
+            return
+        async with self._lock:
+            if self._page is not None:
+                return
+            self._pw = await async_playwright().start()
+            self._browser = await self._pw.chromium.launch(headless=True)
+            self._context = await self._browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            self._page = await self._context.new_page()
+            # Navigate once to pass Cloudflare challenge
+            await self._page.goto(f"{self.BASE_URL}/titles", wait_until="networkidle")
+
+    async def _get_page_html(self, url: str) -> str:
+        await self._ensure_browser()
+        assert self._page is not None
+        await self._page.goto(url, wait_until="networkidle")
+        return await self._page.content()
+
+    async def list_titles(self, language: str | None = None, region: str | None = None) -> list[NewspaperTitle]:
+        html = await self._get_page_html(f"{self.BASE_URL}/titles")
+        titles = JpressParser.parse_titles(html)
+        if language:
+            titles = [t for t in titles if language in t.language]
+        if region:
+            titles = [t for t in titles if region in t.region]
+        return titles
+
+    async def search_articles(
+        self,
+        query: str,
+        newspaper: str | None = None,
+        max_results: int = 20,
+    ) -> list[ArticleResult]:
+        # Navigate to search page and submit form via JS
+        await self._ensure_browser()
+        assert self._page is not None
+        await self._page.goto(f"{self.BASE_URL}/search", wait_until="networkidle")
+        # Fill and submit form
+        await self._page.evaluate(f"""
+            document.querySelector('#inputtxq').value = {repr(query)};
+            document.querySelector('#searchpagesearchform').submit();
+        """)
+        await self._page.wait_for_load_state("networkidle")
+        html = await self._page.content()
+        results = JpressParser.parse_search_results(html)
+        if newspaper:
+            results = [r for r in results if r.pub_code == newspaper]
+        return results[:max_results]
+
+    async def get_issues(self, pub_code: str, year: int | None = None) -> list[IssueInfo]:
+        url = f"{self.BASE_URL}/{pub_code}"
+        html = await self._get_page_html(url)
+        issues = JpressParser.parse_issues(html)
+        if year:
+            issues = [i for i in issues if i.date.startswith(str(year))]
+        return issues
+
+    async def get_page_text(self, page_url: str) -> PageText:
+        if not page_url.startswith("http"):
+            page_url = f"https://www.nli.org.il{page_url}"
+        await self._ensure_browser()
+        assert self._page is not None
+        await self._page.goto(page_url, wait_until="networkidle")
+        # Remove tutorial overlay if present
+        await self._page.evaluate("document.getElementById('viewertutorial')?.remove()")
+        # Wait for text container to potentially load
+        try:
+            await self._page.wait_for_selector(
+                "#documentdisplayleftpanesectiontextcontainer",
+                timeout=5000,
+            )
+        except Exception:
+            pass
+        html = await self._page.content()
+        return JpressParser.parse_article_text(html)
+
+    async def close(self):
+        if self._context:
+            await self._context.close()
+        if self._browser:
+            await self._browser.close()
+        if self._pw:
+            await self._pw.stop()
+        self._page = None
+        self._context = None
+        self._browser = None
+        self._pw = None
