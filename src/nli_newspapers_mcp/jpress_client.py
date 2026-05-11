@@ -208,11 +208,19 @@ class JpressClient:
             if self._page is not None:
                 return
             self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True)
-            self._context = await self._browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
+            launch_kwargs: dict = {"headless": True}
+            # Prefer system Chrome (matching Cloudflare's TLS fingerprint)
+            chrome_paths = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+            ]
+            for p in chrome_paths:
+                if os.path.exists(p):
+                    launch_kwargs["channel"] = "chrome"
+                    break
+            self._browser = await self._pw.chromium.launch(**launch_kwargs)
+            self._context = await self._browser.new_context()
             if os.path.exists(COOKIES_FILE):
                 import json as _json
                 with open(COOKIES_FILE) as f:
