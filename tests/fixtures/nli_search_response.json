@@ -1,0 +1,20 @@
+[
+  {
+    "@id": "https://www.nli.org.il/en/journals/NNL-Journals990018346170205171",
+    "http://purl.org/dc/elements/1.1/title": [{"@value": "הארץ של ערבית."}],
+    "http://purl.org/dc/elements/1.1/language": [{"@value": "heb"}],
+    "http://purl.org/dc/elements/1.1/recordid": [{"@value": "990018346170205171"}],
+    "http://purl.org/dc/elements/1.1/type": [{"@value": "journal"}],
+    "http://purl.org/dc/elements/1.1/subject": [{"@value": "Hebrew newspapers -- Israel"}],
+    "http://purl.org/dc/elements/1.1/publisher": [{"@value": "תל אביב"}]
+  },
+  {
+    "@id": "https://www.nli.org.il/en/journals/NNL-Journals990002808070205171",
+    "http://purl.org/dc/elements/1.1/title": [{"@value": "הפטיש"}],
+    "http://purl.org/dc/elements/1.1/language": [{"@value": "heb"}],
+    "http://purl.org/dc/elements/1.1/recordid": [{"@value": "990002808070205171"}],
+    "http://purl.org/dc/elements/1.1/type": [{"@value": "journal"}],
+    "http://purl.org/dc/elements/1.1/subject": [{"@value": "Hebrew newspapers -- Israel"}],
+    "http://purl.org/dc/elements/1.1/publisher": [{"@value": ""}]
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@type": "sc:Manifest",
+  "label": "הארץ של ערבית.",
+  "metadata": [
+    {"label": "Title", "value": "הארץ של ערבית."},
+    {"label": "Publisher", "value": "תל אביב"},
+    {"label": "Subject", "value": "Hebrew newspapers -- Israel"},
+    {"label": "Source", "value": "The National Library of Israel"},
+    {"label": "Doc Id", "value": "NNL-Journals71290283690005171"},
+    {"label": "Creation Date", "value": "1929"},
+    {"label": "Language", "value": "heb"},
+    {"label": "Alternative Title", "value": ["הארץ heb", "Ha'aretz lat", "هاآرتس ara"]}
+  ],
+  "sequences": []
+}

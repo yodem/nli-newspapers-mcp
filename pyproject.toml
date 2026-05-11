@@ -26,5 +26,8 @@ dev = [
 [project.scripts]
 nli-newspapers-mcp = "nli_newspapers_mcp.server:main"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/nli_newspapers_mcp"]
