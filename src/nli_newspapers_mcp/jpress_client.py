@@ -122,6 +122,75 @@ class JpressParser:
         return issues
 
 
+COOKIES_FILE = os.path.expanduser("~/.nli-newspapers-mcp/cookies.json")
+
+
+def setup_browser_profile():
+    """One-time setup: open real Chrome to pass Cloudflare, export cookies.
+
+    Run this once before using the MCP server:
+        python -m nli_newspapers_mcp.jpress_client
+    """
+    import subprocess
+    import json as _json
+    import sqlite3
+    import shutil
+    import tempfile
+
+    profile_dir = os.path.expanduser("~/.nli-newspapers-mcp/chrome-profile")
+    os.makedirs(os.path.dirname(COOKIES_FILE), exist_ok=True)
+    os.makedirs(profile_dir, exist_ok=True)
+    url = "https://www.nli.org.il/he/newspapers/titles"
+    chrome_paths = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+    ]
+    chrome = None
+    for p in chrome_paths:
+        if os.path.exists(p):
+            chrome = p
+            break
+    if not chrome:
+        print("Chrome not found. Please open this URL in any browser:")
+        print(f"  {url}")
+        print("Then export your cookies for nli.org.il and save them to:")
+        print(f"  {COOKIES_FILE}")
+        return
+
+    print(f"Opening Chrome. Wait for the JPRESS page to fully load,")
+    print(f"then CLOSE Chrome to save cookies.")
+    subprocess.run([chrome, f"--user-data-dir={profile_dir}", url])
+
+    # Extract cookies from Chrome's SQLite cookie database
+    cookie_db = os.path.join(profile_dir, "Default", "Cookies")
+    if not os.path.exists(cookie_db):
+        cookie_db = os.path.join(profile_dir, "Default", "Network", "Cookies")
+    if os.path.exists(cookie_db):
+        tmp = tempfile.mktemp(suffix=".db")
+        shutil.copy2(cookie_db, tmp)
+        conn = sqlite3.connect(tmp)
+        rows = conn.execute(
+            "SELECT name, value, host_key, path, is_secure, is_httponly "
+            "FROM cookies WHERE host_key LIKE '%nli.org.il%'"
+        ).fetchall()
+        conn.close()
+        os.unlink(tmp)
+        cookies = []
+        for name, value, host, path, secure, httponly in rows:
+            cookies.append({
+                "name": name, "value": value,
+                "domain": host, "path": path,
+                "secure": bool(secure), "httpOnly": bool(httponly),
+            })
+        with open(COOKIES_FILE, "w") as f:
+            _json.dump(cookies, f, indent=2)
+        print(f"Saved {len(cookies)} cookies to {COOKIES_FILE}")
+    else:
+        print(f"Cookie database not found. You may need to export cookies manually.")
+    print("Done! Run the MCP server now.")
+
+
 class JpressClient:
     BASE_URL = "https://www.nli.org.il/he/newspapers"
 
@@ -139,22 +208,17 @@ class JpressClient:
             if self._page is not None:
                 return
             self._pw = await async_playwright().start()
-            headless = os.environ.get("PLAYWRIGHT_HEADLESS", "true").lower() == "true"
-            self._browser = await self._pw.chromium.launch(headless=headless)
+            self._browser = await self._pw.chromium.launch(headless=True)
             self._context = await self._browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
+            if os.path.exists(COOKIES_FILE):
+                import json as _json
+                with open(COOKIES_FILE) as f:
+                    cookies = _json.load(f)
+                await self._context.add_cookies(cookies)
             self._page = await self._context.new_page()
-            await self._page.goto(f"{self.BASE_URL}/titles", wait_until="domcontentloaded", timeout=60000)
-            # Wait for Cloudflare challenge to resolve
-            try:
-                await self._page.wait_for_function(
-                    "() => !document.title.includes('Just a moment')",
-                    timeout=30000,
-                )
-            except Exception:
-                pass
-            await self._page.wait_for_load_state("domcontentloaded")
 
     async def _get_page_html(self, url: str) -> str:
         await self._ensure_browser()
@@ -185,16 +249,15 @@ class JpressClient:
         newspaper: str | None = None,
         max_results: int = 20,
     ) -> list[ArticleResult]:
-        # Navigate to search page and submit form via JS
         await self._ensure_browser()
         assert self._page is not None
-        await self._page.goto(f"{self.BASE_URL}/search", wait_until="networkidle")
-        # Fill and submit form
+        await self._page.goto(f"{self.BASE_URL}/search", wait_until="domcontentloaded", timeout=60000)
         await self._page.evaluate(f"""
             document.querySelector('#inputtxq').value = {repr(query)};
             document.querySelector('#searchpagesearchform').submit();
         """)
-        await self._page.wait_for_load_state("networkidle")
+        await self._page.wait_for_load_state("domcontentloaded")
+        await asyncio.sleep(2)
         html = await self._page.content()
         results = JpressParser.parse_search_results(html)
         if newspaper:
@@ -214,10 +277,8 @@ class JpressClient:
             page_url = f"https://www.nli.org.il{page_url}"
         await self._ensure_browser()
         assert self._page is not None
-        await self._page.goto(page_url, wait_until="networkidle")
-        # Remove tutorial overlay if present
+        await self._page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
         await self._page.evaluate("document.getElementById('viewertutorial')?.remove()")
-        # Wait for text container to potentially load
         try:
             await self._page.wait_for_selector(
                 "#documentdisplayleftpanesectiontextcontainer",
@@ -231,11 +292,12 @@ class JpressClient:
     async def close(self):
         if self._context:
             await self._context.close()
-        if self._browser:
-            await self._browser.close()
         if self._pw:
             await self._pw.stop()
         self._page = None
         self._context = None
-        self._browser = None
         self._pw = None
+
+
+if __name__ == "__main__":
+    setup_browser_profile()
